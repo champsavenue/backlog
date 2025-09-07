@@ -1,4 +1,6 @@
-# This repo is used to handle all the upcoming dev task about MMA Fighters 
+# Backlog 
+
+This repo is used to handle all the upcoming dev task about MMA Fighters 
 
 3 categories identified so far:
 - MONETIZATION: every idea to enhance the game revenues
