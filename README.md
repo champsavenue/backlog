@@ -10,3 +10,12 @@ This repo is used to handle all the upcoming dev task about MMA Fighters
 Please use the labels to reflect:
 - task priority
 - task status
+
+# Developers team
+- Oriane (Game UI / scripts)
+- Adnan (Game UI / scripts)
+- Seb (CTO)
+
+# Assets team
+
+![assets-devs](https://github.com/user-attachments/assets/8a08b7a4-ef30-4640-9a2f-96a669ade4b6)
