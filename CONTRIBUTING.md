@@ -17,7 +17,9 @@ When all the tests are done and OK, Seb will deploy [TESTING] into the public pl
 
 - On a daily basis I will update the scripts on the repository https://github.com/champsavenue/mma-fighters to reflect the current state of MMA Fighters [TESTING]
 
-- I will also put a tag on the version provided by Exclusible to have kind of reference
+- Watch out this repo contains only the Lua scripts and not the game assets
+
+- You can use this [release](https://github.com/champsavenue/mma-fighters/releases/tag/exclusible-v1.0.0) as the reference provided by Exclusible 
 
 # Workflow
 
@@ -26,3 +28,4 @@ When all the tests are done and OK, Seb will deploy [TESTING] into the public pl
 3. warn the other devs about potential impacted files 
 4. when feature is ready: ping Champs team
 5. Seb will publish the latest version into the public place
+6. Seb / Gautier will inform of a new patch on the [Discord](https://discord.com/invite/wFjtxkqXQe) Discord
