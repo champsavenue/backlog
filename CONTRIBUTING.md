@@ -23,9 +23,13 @@ When all the tests are done and OK, Seb will deploy [TESTING] into the public pl
 
 # Workflow
 
-1. if needed experience your next feature into [LABS]
+1. if needed experience your next feature into [LABS] or a private place
 2. once ready, integrate it into [TESTING]
 3. warn the other devs about potential impacted files 
 4. when feature is ready: ping Champs team
-5. Seb will publish the latest version into the public place
-6. Seb / Gautier will inform of a new patch on the [Discord](https://discord.com/invite/wFjtxkqXQe) Discord
+5. Update the status of your task into [issues](https://github.com/champsavenue/backlog/issues) and/or the [excel sheet](https://docs.google.com/spreadsheets/d/1LKraOAYZHdQdy9btaJUhLKnSV3jKDUCjEELOPNwvxZ0/edit?gid=359677304#gid=359677304)
+6. we will test first in studio between devs
+7. Seb will publish the TESTING version into the [PREVIEW](https://www.roblox.com/games/110103729488462/PREVIEW-MMA-Fighters)
+8. we wil test again in real mode with the extended teams (Champs + Devs)
+9. If test OK, Seb will publish the TESTING into PUBLIC
+10. Seb / Gautier will inform of a new patch on the [Discord](https://discord.com/invite/wFjtxkqXQe) Discord
