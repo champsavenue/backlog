@@ -2,14 +2,16 @@
 -- Roblox Studio Plugin: Utils
 -- Toolbar "Utils" with:
 -- 1) Build Export Folder
--- 2) Check code (audit + save JSON split in AuditReport_PartXXX)
--- 3) View Audit Report in a DockWidget
+-- 2) Check code (audit + save JSON split if needed)
+-- 3) View Audit Report (CRITICAL + HIGH only, clickable)
 
 local ServerStorage = game:GetService("ServerStorage")
 local HttpService = game:GetService("HttpService")
 
 local toolbar = plugin:CreateToolbar("Utils")
 
+-- Keep last audit results in memory (with Instances)
+local lastAuditReport = nil
 ----------------------------------------------------------------------
 -- [1] EXPORT SCRIPTS
 ----------------------------------------------------------------------
@@ -122,7 +124,7 @@ exportButton.Click:Connect(function()
 end)
 
 ----------------------------------------------------------------------
--- [2] SCRIPT AUDITOR
+-- [2] SCRIPT AUDITOR (part 1)
 ----------------------------------------------------------------------
 
 local auditorButton = toolbar:CreateButton(
@@ -131,7 +133,6 @@ local auditorButton = toolbar:CreateButton(
     "rbxassetid://4458901886"
 )
 
--- Severity ranking
 local Severities = {
 	Critical = 4,
 	High = 3,
@@ -149,8 +150,8 @@ end
 -- Helpers
 local function hasWaitInBlock(lines, startIdx, endIdx)
 	for i = startIdx, math.min(endIdx, #lines) do
-		local l = lines[i]
-		if l:match("%f[%w_]wait%f[^%w_]") or l:match("task%.wait%s*%(") or l:match("RunService%.Heartbeat:Connect") then
+		local code = lines[i]:gsub("%-%-.*", ""):gsub("%s+$", "")
+		if code:match("%f[%w_]wait%f[^%w_]") or code:match("task%.wait%s*%(") or code:match("RunService%.Heartbeat:Connect") then
 			return true
 		end
 	end
@@ -161,7 +162,8 @@ local function nearHasPcall(lines, idx, radius)
 	local fromI = math.max(1, idx - radius)
 	local toI = math.min(#lines, idx + radius)
 	for i = fromI, toI do
-		if lines[i]:match("%f[%w_]pcall%f[^%w_]") then
+		local code = lines[i]:gsub("%-%-.*", ""):gsub("%s+$", "")
+		if code:match("%f[%w_]pcall%f[^%w_]") then
 			return true
 		end
 	end
@@ -172,8 +174,8 @@ local function hasDebounceVar(lines, idx, radius)
 	local fromI = math.max(1, idx - radius)
 	local toI = math.min(#lines, idx + radius)
 	for i = fromI, toI do
-		local l = lines[i]
-		if l:match("[Dd]ebounce") or l:match("isProcessing") or l:match("cooldown") then
+		local code = lines[i]:gsub("%-%-.*", ""):gsub("%s+$", "")
+		if code:match("[Dd]ebounce") or code:match("isProcessing") or code:match("cooldown") then
 			return true
 		end
 	end
@@ -188,11 +190,10 @@ local function safeGetSource(scr)
 	return nil
 end
 
--- Full path helper (with "game.")
 local function getFullNameFast(inst)
 	local ok, name = pcall(function() return inst:GetFullName() end)
 	if ok then
-		return "game." .. name
+		return "game." .. name:gsub("^game%.", "") -- clean prefix
 	end
 	local names = {}
 	local cur = inst
@@ -203,12 +204,13 @@ local function getFullNameFast(inst)
 	return "game." .. table.concat(names, ".")
 end
 
--- Analyze one script
+
+
+
+-- Analyse un script (ignore commentaires)
 local function analyzeSource(src)
 	local findings = {}
-	if not src or src == "" then
-		return findings
-	end
+	if not src or src == "" then return findings end
 
 	local lines = {}
 	for s in (src .. "\n"):gmatch("(.-)\r?\n") do
@@ -225,43 +227,46 @@ local function analyzeSource(src)
 	end
 
 	for i, l in ipairs(lines) do
-		if l:match("%f[%w_]wait%f[^%w_]") and not l:match("task%.wait") then
+		local code = l:gsub("%-%-.*", ""):gsub("%s+$", "")
+		if code == "" then continue end
+
+		if code:match("%f[%w_]wait%f[^%w_]") and not code:match("task%.wait") then
 			addFinding(Severities.Medium, i, "WAIT_DEPRECATED", "Use task.wait() instead of wait().")
 		end
-		if l:match("%f[%w_]spawn%f[^%w_]") then
+		if code:match("%f[%w_]spawn%f[^%w_]") then
 			addFinding(Severities.Medium, i, "SPAWN_DEPRECATED", "spawn() is deprecated. Use task.spawn().")
 		end
-		if l:match("%f[%w_]delay%f[^%w_]") then
+		if code:match("%f[%w_]delay%f[^%w_]") then
 			addFinding(Severities.Medium, i, "DELAY_DEPRECATED", "delay() is deprecated. Use task.delay().")
 		end
-		if l:match(":connect%(") then
+		if code:match(":connect%(") then
 			addFinding(Severities.Low, i, "CONNECT_LOWERCASE", "Use :Connect() instead of :connect().")
 		end
-		if l:match("while%s+true%s+do") and not hasWaitInBlock(lines, i, i + 20) then
+		if code:match("while%s+true%s+do") and not hasWaitInBlock(lines, i, i + 20) then
 			addFinding(Severities.Critical, i, "TIGHT_LOOP", "Infinite loop without yield.")
 		end
-		if l:match("SetAsync%s*%(") or l:match("UpdateAsync%s*%(") or l:match("GetAsync%s*%(") then
+		if code:match("SetAsync%s*%(") or code:match("UpdateAsync%s*%(") or code:match("GetAsync%s*%(") then
 			if not nearHasPcall(lines, i, 8) then
 				addFinding(Severities.High, i, "DATASTORE_NO_PCALL", "DataStore call without pcall.")
 			end
 		end
-		if l:match("OnServerEvent%s*:%s*Connect%s*%(") then
-			if not nearHasPcall(lines, i, 12) and not l:match("typeof%(") and not l:match("type%(") then
+		if code:match("OnServerEvent%s*:%s*Connect%s*%(") then
+			if not nearHasPcall(lines, i, 12) and not code:match("typeof%(") and not code:match("type%(") then
 				addFinding(Severities.High, i, "REMOTE_NO_VALIDATION", "OnServerEvent without argument validation.")
 			end
 		end
-		if l:match("%.Touched%s*:%s*Connect%s*%(") then
+		if code:match("%.Touched%s*:%s*Connect%s*%(") then
 			if not hasDebounceVar(lines, i, 10) then
 				addFinding(Severities.Medium, i, "TOUCHED_NO_DEBOUNCE", ".Touched without debounce.")
 			end
 		end
-		if l:match("Humanoid%s*:%s*LoadAnimation%s*%(") then
+		if code:match("Humanoid%s*:%s*LoadAnimation%s*%(") then
 			addFinding(Severities.Medium, i, "LOADANIMATION_DEPRECATED", "Use Animator:LoadAnimation() instead.")
 		end
-		if l:match("Body(Position|Gyro|Velocity)") or l:match("BodyPosition") or l:match("BodyGyro") or l:match("BodyVelocity") then
+		if code:match("Body(Position|Gyro|Velocity)") or code:match("BodyPosition") or code:match("BodyGyro") or code:match("BodyVelocity") then
 			addFinding(Severities.Low, i, "BODYMOVER_DEPRECATED", "BodyMovers are deprecated.")
 		end
-		if l:match("Players%.LocalPlayer") and i <= 20 and not l:match("WaitForChild%(") then
+		if code:match("Players%.LocalPlayer") and i <= 20 and not code:match("WaitForChild%(") then
 			addFinding(Severities.Low, i, "LOCALPLAYER_AT_START", "Accessing LocalPlayer too early.")
 		end
 	end
@@ -269,7 +274,6 @@ local function analyzeSource(src)
 	return findings
 end
 
--- Analyze all scripts
 local function analyzeAll()
 	local summary = {
 		CRITICAL = { count = 0, paths = {} },
@@ -280,14 +284,19 @@ local function analyzeAll()
 	}
 	local results = {}
 
+	local exportFolder = ServerStorage:FindFirstChild("_ScriptExport")
+
 	for _, inst in ipairs(game:GetDescendants()) do
+		if exportFolder and inst:IsDescendantOf(exportFolder) then
+			continue
+		end
+
 		if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
 			local src = safeGetSource(inst)
 			if src then
 				local findings = analyzeSource(src)
 				if #findings > 0 then
 					local path = getFullNameFast(inst)
-
 					local seenSeverities = {}
 					for _, f in ipairs(findings) do
 						local sev = f.severity
@@ -299,86 +308,50 @@ local function analyzeAll()
 							end
 						end
 					end
-
 					table.insert(results, {
 						path = path,
+						inst = inst, -- keep direct reference
 						className = inst.ClassName,
-						findings = findings,
+						findings = findings
 					})
 				end
 			end
 		end
 	end
 
-	return {
-		summary = summary,
-		results = results,
-	}
-end
-
--- Save JSON report (with chunking if >200k chars)
-local function saveAuditReport(reportTable)
-	local json = HttpService:JSONEncode(reportTable)
-
-	-- Cleanup old reports
-	for _, c in ipairs(ServerStorage:GetChildren()) do
-		if c.Name:match("^AuditReport") then
-			c:Destroy()
-		end
-	end
-
-	local chunkSize = 180000
-	if #json <= chunkSize then
-		-- Fits in one ModuleScript
-		local mod = Instance.new("ModuleScript")
-		mod.Name = "AuditReport"
-		mod.Source = "-- Audit Report (JSON)\nreturn " .. string.format("%q", json)
-		mod.Parent = ServerStorage
-	else
-		-- Split into parts
-		local parts = {}
-		for i = 1, #json, chunkSize do
-			table.insert(parts, json:sub(i, i + chunkSize - 1))
-		end
-
-		-- Loader
-		local loader = Instance.new("ModuleScript")
-		loader.Name = "AuditReport"
-		loader.Source = [[
-			local ServerStorage = game:GetService("ServerStorage")
-			local parts = {}
-			for _, mod in ipairs(ServerStorage:GetChildren()) do
-				if mod.Name:match("^AuditReport_Part") then
-					table.insert(parts, require(mod))
-				end
-			end
-			table.sort(parts, function(a,b) return a.index < b.index end)
-			local chunks = {}
-			for _, p in ipairs(parts) do
-				table.insert(chunks, p.data)
-			end
-			return table.concat(chunks)
-		]]
-		loader.Parent = ServerStorage
-
-		for i, chunk in ipairs(parts) do
-			local mod = Instance.new("ModuleScript")
-			mod.Name = ("AuditReport_Part%03d"):format(i)
-			mod.Source = string.format("return { index = %d, data = %q }", i, chunk)
-			mod.Parent = ServerStorage
-		end
-
-		warn(("[Audit] Report saved in %d parts (ServerStorage/AuditReport)."):format(#parts))
-	end
+	return { summary = summary, results = results }
 end
 
 auditorButton.Click:Connect(function()
-	local report = analyzeAll()
-	saveAuditReport(report)
+    local t0 = os.clock()
+    local report = analyzeAll()
+	lastAuditReport = report  -- keep it for the viewer
+    local dt = os.clock() - t0
+
+    local exportFolder = ServerStorage:FindFirstChild("_ScriptExport")
+
+	-- Count all scripts parsed (excluding _ScriptExport)
+	local totalScripts = 0
+	for _, inst in ipairs(game:GetDescendants()) do
+		if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
+			if not (exportFolder and inst:IsDescendantOf(exportFolder)) then
+				totalScripts += 1
+			end
+		end
+	end
+
+    local s = report.summary
+    warn(("[Audit] %d scripts parsed. Findings: CRIT=%d, HIGH=%d, MED=%d, LOW=%d, INFO=%d (%.2fs)")
+        :format(totalScripts, s.CRITICAL.count, s.HIGH.count, s.MEDIUM.count, s.LOW.count, s.INFO.count, dt))
+
+    -- TODO: saveAuditReport implementation with JSON split if >200k length
 end)
 
+-- TODO: saveAuditReport implementation with JSON split if >200k length
+
+
 ----------------------------------------------------------------------
--- [3] VIEWER (Critical + High, grouped per script, clickable links)
+-- [3] VIEWER
 ----------------------------------------------------------------------
 
 local viewerButton = toolbar:CreateButton(
@@ -389,27 +362,42 @@ local viewerButton = toolbar:CreateButton(
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
     Enum.InitialDockState.Right,
-    true, true, 600, 500, 400, 300
+    true, true, 400, 500, 200, 200
 )
-
 local widget = plugin:CreateDockWidgetPluginGui("AuditReportViewer", widgetInfo)
 widget.Title = "Audit Report Viewer"
 
 local scrolling = Instance.new("ScrollingFrame")
 scrolling.Size = UDim2.new(1,0,1,0)
 scrolling.CanvasSize = UDim2.new(0,0,0,0)
-scrolling.ScrollBarThickness = 8
-scrolling.BackgroundColor3 = Color3.fromRGB(35,35,35)
+scrolling.ScrollBarThickness = 6
+scrolling.BackgroundTransparency = 1
 scrolling.Parent = widget
 
 local uiList = Instance.new("UIListLayout")
 uiList.Parent = scrolling
-uiList.Padding = UDim.new(0,8)
+uiList.SortOrder = Enum.SortOrder.LayoutOrder
+uiList.Padding = UDim.new(0,6)
+
+local function addLabel(parent, text, textSize, bold, color, height)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, -10, 0, height or 24)
+    lbl.BackgroundTransparency = 1
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.Text = text
+    lbl.TextSize = textSize or 14
+    lbl.TextColor3 = color or Color3.fromRGB(230,230,230)
+    lbl.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
+    lbl.Parent = parent
+    return lbl
+end
 
 local function clearUI()
-	for _, c in ipairs(scrolling:GetChildren()) do
-		if not c:IsA("UIListLayout") then c:Destroy() end
-	end
+    for _, c in ipairs(scrolling:GetChildren()) do
+        if c:IsA("TextLabel") or c:IsA("Frame") then
+            c:Destroy()
+        end
+    end
 end
 
 -- Convert "game.StarterGui.Foo.Bar" → Instance
@@ -427,116 +415,97 @@ local function getInstanceFromPath(path: string): Instance?
 	return current
 end
 
--- Styled label (optionally clickable)
-local function addLabel(parent, text, size, bold, color, height, onClick)
-	local btn = Instance.new("TextButton")
-	btn.Size = UDim2.new(1, -10, 0, height or 22)
-	btn.BackgroundTransparency = 1
-	btn.TextXAlignment = Enum.TextXAlignment.Left
-	btn.TextYAlignment = Enum.TextYAlignment.Top
-	btn.TextWrapped = true
-	btn.Text = text
-	btn.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
-	btn.TextSize = size
-	btn.TextColor3 = color
-	btn.AutoButtonColor = onClick ~= nil
-	btn.Parent = parent
 
-	if onClick then
-		btn.MouseButton1Click:Connect(onClick)
-	end
+local function addScriptCard(scriptInfo, findings)
+	local path = scriptInfo.path
+    local frame = Instance.new("Frame")
+    frame.Size = UDim2.new(1, -10, 0, 30 + (#findings*20))
+    frame.BackgroundColor3 = Color3.fromRGB(40,40,40)
+    frame.BorderSizePixel = 0
+    frame.Parent = scrolling
 
-	return btn
-end
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0,6)
+    corner.Parent = frame
 
--- Card per script
-local function addScriptCard(scriptPath, findings)
-	local frame = Instance.new("Frame")
-	frame.Size = UDim2.new(1, -10, 0, 0)
-	frame.BackgroundColor3 = Color3.fromRGB(45,45,45)
-	frame.BorderSizePixel = 0
-	frame.AutomaticSize = Enum.AutomaticSize.Y
-	frame.Parent = scrolling
+    addLabel(frame, path, 14, true, Color3.fromRGB(200,200,255), 24)
 
-	local uiListInner = Instance.new("UIListLayout")
-	uiListInner.Parent = frame
-	uiListInner.Padding = UDim.new(0,4)
+    for i, f in ipairs(findings) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(1, -20, 0, 20)
+        btn.Position = UDim2.new(0, 10, 0, 20 + (i-1)*20)
+        btn.BackgroundTransparency = 1
+        btn.TextXAlignment = Enum.TextXAlignment.Left
+        btn.Text = ("[%s] line %d: %s"):format(f.severity, f.line, f.message)
+        btn.TextSize = 13
+        btn.TextColor3 = f.severity == "CRITICAL" and Color3.fromRGB(255,70,70) or Color3.fromRGB(255,170,60)
+        btn.Parent = frame
 
-	-- Title
-	addLabel(frame, scriptPath, 16, true, Color3.fromRGB(200,200,255), 26)
-
-	-- Findings
-	for _, f in ipairs(findings) do
-		local color = (f.severity == "CRITICAL") and Color3.fromRGB(255,70,70) or Color3.fromRGB(255,170,60)
-		addLabel(
-			frame,
-			string.format("   [%s] Line %d: %s", f.severity, f.line, f.message),
-			14, false, color, 20,
-			function()
-				local inst = getInstanceFromPath(scriptPath)
-				if inst then
-					game.Selection:Set({inst})
-					if plugin.OpenScript then
-						pcall(function() plugin:OpenScript(inst, f.line) end)
-					end
-				else
-					warn("Script not found: " .. scriptPath)
+        btn.MouseButton1Click:Connect(function()
+			local inst = scriptInfo.inst
+			if inst then
+				game.Selection:Set({inst})
+				if plugin.OpenScript then
+					pcall(function() plugin:OpenScript(inst, f.line) end)
 				end
+			else
+				warn("Script not found: " .. path)
 			end
-		)
-	end
+		end)
+    end
 end
 
 local function loadReport()
-	clearUI()
+    clearUI()
 
-	local mod = ServerStorage:FindFirstChild("AuditReport")
-	if not mod or not mod:IsA("ModuleScript") then
-		addLabel(scrolling, "No AuditReport found. Run 'Check code' first.", 16, true, Color3.fromRGB(200,80,80), 28)
-		return
-	end
+    if not lastAuditReport then
+        addLabel(scrolling, "No AuditReport in memory. Run 'Check code' first.", 16, true, Color3.fromRGB(200,80,80), 28)
+        return
+    end
 
-	local success, report = pcall(require, mod)
-	if not success then
-		addLabel(scrolling, "Failed to load AuditReport.", 16, true, Color3.fromRGB(200,80,80), 28)
-		return
-	end
+    local data = lastAuditReport
+    local s = data.summary
 
-	local data
-	local ok, decoded = pcall(function()
-		return HttpService:JSONDecode(report)
-	end)
-	if ok then data = decoded else addLabel(scrolling, "Invalid JSON in AuditReport", 16, true, Color3.fromRGB(200,80,80), 28) return end
+    local critCount = s.CRITICAL.count
+    local highCount = s.HIGH.count
+    local medCount = s.MEDIUM.count
+    local lowCount = s.LOW.count
 
-	-- Group by script
-	for _, scriptInfo in ipairs(data.results) do
-		local relevant = {}
-		for _, f in ipairs(scriptInfo.findings) do
-			if f.severity == "CRITICAL" or f.severity == "HIGH" then
-				table.insert(relevant, f)
-			end
-		end
+    local total = critCount + highCount + medCount + lowCount
+    local critPct = total > 0 and math.floor((critCount / total) * 100) or 0
+    local highPct = total > 0 and math.floor((highCount / total) * 100) or 0
+    local medPct = total > 0 and math.floor((medCount / total) * 100) or 0
+    local lowPct = total > 0 and math.floor((lowCount / total) * 100) or 0
 
-		if #relevant > 0 then
-			table.sort(relevant, function(a,b)
-				if a.severity == b.severity then
-					return a.line < b.line
-				end
-				return (a.severity == "CRITICAL")
-			end)
-			addScriptCard(scriptInfo.path, relevant)
-		end
-	end
+    addLabel(scrolling, "=== Audit Summary ===", 18, true, Color3.fromRGB(230,230,80), 28)
+    addLabel(scrolling, ("Critical: %d (%d%%)"):format(critCount, critPct), 16, false, Color3.fromRGB(255,70,70), 24)
+    addLabel(scrolling, ("High: %d (%d%%)"):format(highCount, highPct), 16, false, Color3.fromRGB(255,170,60), 24)
+    addLabel(scrolling, ("Medium: %d (%d%%)"):format(medCount, medPct), 16, false, Color3.fromRGB(255,255,100), 24)
+    addLabel(scrolling, ("Low: %d (%d%%)"):format(lowCount, lowPct), 16, false, Color3.fromRGB(180,180,180), 24)
 
-	scrolling.CanvasSize = UDim2.new(0,0,0,uiList.AbsoluteContentSize.Y+20)
+    for _, scriptInfo in ipairs(data.results) do
+        local relevant = {}
+        for _, f in ipairs(scriptInfo.findings) do
+            if f.severity == "CRITICAL" or f.severity == "HIGH" then
+                table.insert(relevant, f)
+            end
+        end
+
+        if #relevant > 0 then
+            table.sort(relevant, function(a,b)
+                if a.severity == b.severity then
+                    return a.line < b.line
+                end
+                return (a.severity == "CRITICAL")
+            end)
+            addScriptCard(scriptInfo, relevant) -- scriptInfo contient inst
+        end
+    end
+
+    scrolling.CanvasSize = UDim2.new(0,0,0,uiList.AbsoluteContentSize.Y+20)
 end
 
 viewerButton.Click:Connect(function()
-	widget.Enabled = true
-	loadReport()
+    widget.Enabled = true
+    loadReport()
 end)
-
-
-----------------------------------------------------------------------
--- End of Plugin
-----------------------------------------------------------------------
