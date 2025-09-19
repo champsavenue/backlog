@@ -204,7 +204,10 @@ local function getFullNameFast(inst)
 	return "game." .. table.concat(names, ".")
 end
 
-
+local function isDeprecatedCall(code, name)
+	return code:match("%f[%w_]"..name.."%f[^%w_]") 
+	   and not code:match("task%."..name.."%s*%(")
+end
 
 
 -- Analyse un script (ignore commentaires)
@@ -230,15 +233,17 @@ local function analyzeSource(src)
 		local code = l:gsub("%-%-.*", ""):gsub("%s+$", "")
 		if code == "" then continue end
 
-		if code:match("%f[%w_]wait%f[^%w_]") and not code:match("task%.wait") then
+
+		if isDeprecatedCall(code, "wait") then
 			addFinding(Severities.Medium, i, "WAIT_DEPRECATED", "Use task.wait() instead of wait().")
 		end
-		if code:match("%f[%w_]spawn%f[^%w_]") then
-			addFinding(Severities.Medium, i, "SPAWN_DEPRECATED", "spawn() is deprecated. Use task.spawn().")
+		if isDeprecatedCall(code, "spawn") then
+			addFinding(Severities.Medium, i, "SPAWN_DEPRECATED", "Use task.spawn().")
 		end
-		if code:match("%f[%w_]delay%f[^%w_]") then
-			addFinding(Severities.Medium, i, "DELAY_DEPRECATED", "delay() is deprecated. Use task.delay().")
+		if isDeprecatedCall(code, "delay") then
+			addFinding(Severities.Medium, i, "DELAY_DEPRECATED", "Use task.delay().")
 		end
+		
 		if code:match(":connect%(") then
 			addFinding(Severities.Low, i, "CONNECT_LOWERCASE", "Use :Connect() instead of :connect().")
 		end
@@ -379,18 +384,28 @@ uiList.Parent = scrolling
 uiList.SortOrder = Enum.SortOrder.LayoutOrder
 uiList.Padding = UDim.new(0,6)
 
-local function addLabel(parent, text, textSize, bold, color, height)
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1, -10, 0, height or 24)
-    lbl.BackgroundTransparency = 1
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Text = text
-    lbl.TextSize = textSize or 14
-    lbl.TextColor3 = color or Color3.fromRGB(230,230,230)
-    lbl.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
-    lbl.Parent = parent
-    return lbl
+local function addLabel(parent, text, textSize, bold, color, height, asButton)
+    local el
+    if asButton then
+        el = Instance.new("TextButton")
+        el.AutoButtonColor = true
+        el.BackgroundTransparency = 1
+    else
+        el = Instance.new("TextLabel")
+        el.BackgroundTransparency = 1
+    end
+
+    el.Size = UDim2.new(1, -10, 0, height or 24)
+    el.TextXAlignment = Enum.TextXAlignment.Left
+    el.Text = text
+    el.TextSize = textSize or 14
+    el.TextColor3 = color or Color3.fromRGB(230,230,230)
+    el.Font = bold and Enum.Font.SourceSansBold or Enum.Font.SourceSans
+    el.Parent = parent
+
+    return el
 end
+
 
 local function clearUI()
     for _, c in ipairs(scrolling:GetChildren()) do
@@ -428,20 +443,21 @@ local function addScriptCard(scriptInfo, findings)
     corner.CornerRadius = UDim.new(0,6)
     corner.Parent = frame
 
-    addLabel(frame, path, 14, true, Color3.fromRGB(200,200,255), 24)
+    -- Affichage du chemin
+	addLabel(frame, path, 14, true, Color3.fromRGB(200,200,255), 24)
 
-    for i, f in ipairs(findings) do
-        local btn = Instance.new("TextButton")
-        btn.Size = UDim2.new(1, -20, 0, 20)
-        btn.Position = UDim2.new(0, 10, 0, 20 + (i-1)*20)
-        btn.BackgroundTransparency = 1
-        btn.TextXAlignment = Enum.TextXAlignment.Left
-        btn.Text = ("[%s] line %d: %s"):format(f.severity, f.line, f.message)
-        btn.TextSize = 13
-        btn.TextColor3 = f.severity == "CRITICAL" and Color3.fromRGB(255,70,70) or Color3.fromRGB(255,170,60)
-        btn.Parent = frame
+    -- Findings (utilisation de addLabel en mode bouton)
+	for i, f in ipairs(findings) do
+		local btn = addLabel(frame, ("[%s] line %d: %s"):format(f.severity, f.line, f.message), 14, false,
+			f.severity == "CRITICAL" and Color3.fromRGB(255,70,70)
+				or f.severity == "HIGH" and Color3.fromRGB(255,170,60)
+				or Color3.fromRGB(200,200,200),
+			20,
+			true -- asButton
+		)
+		btn.Position = UDim2.new(0, 10, 0, 20 + (i-1)*20)
 
-        btn.MouseButton1Click:Connect(function()
+		btn.MouseButton1Click:Connect(function()
 			local inst = scriptInfo.inst
 			if inst then
 				game.Selection:Set({inst})
@@ -452,7 +468,7 @@ local function addScriptCard(scriptInfo, findings)
 				warn("Script not found: " .. path)
 			end
 		end)
-    end
+	end
 end
 
 local function loadReport()
@@ -486,7 +502,7 @@ local function loadReport()
     for _, scriptInfo in ipairs(data.results) do
         local relevant = {}
         for _, f in ipairs(scriptInfo.findings) do
-            if f.severity == "CRITICAL" or f.severity == "HIGH" then
+            if f.severity == "CRITICAL" or f.severity == "HIGH" or f.severity == "MEDIUM" then
                 table.insert(relevant, f)
             end
         end
