@@ -19,7 +19,7 @@ local lastAuditReport = nil
 local exportButton = toolbar:CreateButton(
     "Build Export Folder",
     "Export all scripts into ServerStorage/_ScriptExport",
-    "rbxassetid://4458901886"
+    "rbxassetid://6026568198"
 )
 
 local function safeName(s: string): string
@@ -130,7 +130,7 @@ end)
 local auditorButton = toolbar:CreateButton(
     "Check code",
     "Audit all scripts and save report in ServerStorage/AuditReport",
-    "rbxassetid://4458901886"
+    "rbxassetid://6023426926"
 )
 
 local Severities = {
@@ -361,8 +361,8 @@ end)
 
 local viewerButton = toolbar:CreateButton(
     "View Audit Report",
-    "Open a window to view CRITICAL and HIGH issues",
-    "rbxassetid://4458901886"
+    "Open a window to view CRITICAL / HIGH / MEDIUM issues",
+    "rbxassetid://6022668945"
 )
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
@@ -524,4 +524,75 @@ end
 viewerButton.Click:Connect(function()
     widget.Enabled = true
     loadReport()
+end)
+
+
+----------------------------------------------------------------------
+-- [4] FIND PRINTS
+----------------------------------------------------------------------
+
+local printsButton = toolbar:CreateButton(
+    "Find Prints",
+    "List all print() occurrences in scripts",
+    "rbxassetid://6023426926"
+)
+
+local function findPrints()
+    local results = {}
+
+    for _, inst in ipairs(game:GetDescendants()) do
+        if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
+            local src = safeGetSource(inst)
+            if src then
+                local lines = {}
+                for s in (src .. "\n"):gmatch("(.-)\r?\n") do
+                    table.insert(lines, s)
+                end
+                for i, l in ipairs(lines) do
+                    local code = l:gsub("%-%-.*", "") -- remove comments
+                    if code:match("%f[%w_]print%s*%(") then
+                        table.insert(results, {
+                            inst = inst,
+                            path = getFullNameFast(inst),
+                            line = i,
+                            text = l
+                        })
+                    end
+                end
+            end
+        end
+    end
+
+    return results
+end
+
+local function showPrints()
+    clearUI()
+
+    local prints = findPrints()
+    if #prints == 0 then
+        addLabel(scrolling, "No print() found in project scripts.", 16, true, Color3.fromRGB(200,200,200), 28)
+        return
+    end
+
+    addLabel(scrolling, ("=== Found %d print() statements ==="):format(#prints), 18, true, Color3.fromRGB(80,230,80), 28)
+
+    for _, p in ipairs(prints) do
+        local btn = addLabel(scrolling, ("%s (line %d): %s"):format(p.path, p.line, p.text), 14, false,
+            Color3.fromRGB(200,255,200), 20, true)
+
+        btn.MouseButton1Click:Connect(function()
+            game.Selection:Set({p.inst})
+            if plugin.OpenScript then
+                pcall(function() plugin:OpenScript(p.inst, p.line) end)
+            end
+        end)
+    end
+
+    scrolling.CanvasSize = UDim2.new(0,0,0,uiList.AbsoluteContentSize.Y+20)
+end
+
+printsButton.Click:Connect(function()
+    widget.Enabled = true
+    showPrints()
 end)
