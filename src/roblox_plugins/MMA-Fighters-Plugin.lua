@@ -4,6 +4,8 @@
 -- 1) Build Export Folder
 -- 2) Check code (audit + save JSON split if needed)
 -- 3) View Audit Report (CRITICAL + HIGH only, clickable)
+---4) Find all Print() into the SCRIPTS
+---5) Format a script in a normalized way
 
 local ServerStorage = game:GetService("ServerStorage")
 local HttpService = game:GetService("HttpService")
@@ -21,6 +23,7 @@ local exportButton = toolbar:CreateButton(
     "Export all scripts into ServerStorage/_ScriptExport",
     "rbxassetid://6026568198"
 )
+exportButton.ClickableWhenViewportHidden = true
 
 local function safeName(s: string): string
 	s = s:gsub("[%c%z]", "")
@@ -124,7 +127,7 @@ exportButton.Click:Connect(function()
 end)
 
 ----------------------------------------------------------------------
--- [2] SCRIPT AUDITOR (part 1)
+-- [2] SCRIPT AUDITOR 
 ----------------------------------------------------------------------
 
 local auditorButton = toolbar:CreateButton(
@@ -132,6 +135,7 @@ local auditorButton = toolbar:CreateButton(
     "Audit all scripts and save report in ServerStorage/AuditReport",
     "rbxassetid://6023426926"
 )
+auditorButton.ClickableWhenViewportHidden = true
 
 local Severities = {
 	Critical = 4,
@@ -364,6 +368,7 @@ local viewerButton = toolbar:CreateButton(
     "Open a window to view CRITICAL / HIGH / MEDIUM issues",
     "rbxassetid://6022668945"
 )
+viewerButton.ClickableWhenViewportHidden = true
 
 local widgetInfo = DockWidgetPluginGuiInfo.new(
     Enum.InitialDockState.Right,
@@ -408,11 +413,11 @@ end
 
 
 local function clearUI()
-    for _, c in ipairs(scrolling:GetChildren()) do
-        if c:IsA("TextLabel") or c:IsA("Frame") then
-            c:Destroy()
-        end
-    end
+	for _, c in ipairs(scrolling:GetChildren()) do
+		if not c:IsA("UIListLayout") and not c:IsA("UICorner") then
+			c:Destroy()
+		end
+	end
 end
 
 -- Convert "game.StarterGui.Foo.Bar" → Instance
@@ -537,8 +542,11 @@ local printsButton = toolbar:CreateButton(
     "rbxassetid://6023426926"
 )
 
+printsButton.ClickableWhenViewportHidden = true
+
 local function findPrints()
     local results = {}
+    local insideBlockComment = false
 
     for _, inst in ipairs(game:GetDescendants()) do
         if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
@@ -549,7 +557,25 @@ local function findPrints()
                     table.insert(lines, s)
                 end
                 for i, l in ipairs(lines) do
-                    local code = l:gsub("%-%-.*", "") -- remove comments
+                    local line = l
+
+                    -- detect block comment start
+                    if line:match("^%s*%-%-%[%[") then
+                        insideBlockComment = true
+                    end
+
+                    -- detect block comment end
+                    if insideBlockComment then
+                        if line:match("%]%]") then
+                            insideBlockComment = false
+                        end
+                        continue -- skip this line entirely
+                    end
+
+                    -- strip inline comments
+                    local code = line:gsub("%-%-.*", "")
+
+                    -- detect print calls
                     if code:match("%f[%w_]print%s*%(") then
                         table.insert(results, {
                             inst = inst,
@@ -595,4 +621,98 @@ end
 printsButton.Click:Connect(function()
     widget.Enabled = true
     showPrints()
+end)
+
+----------------------------------------------------------------------
+-- [5] FORMATTER
+----------------------------------------------------------------------
+
+local formatButton = toolbar:CreateButton(
+    "Format Script",
+    "Format selected Script(s) with tabs and clean sections",
+    "rbxassetid://4458901886"
+)
+formatButton.ClickableWhenViewportHidden = true
+
+-- Header template (inspired by Client_Changelog_Handle.lua style)
+local HEADER = [[
+--------------------------------------------------------------------
+-- %s
+-- Author : Dark
+-- Created: %s
+--------------------------------------------------------------------
+]]
+
+-- Indentation with tabs
+local function formatIndentation(source: string): string
+	local formatted, indentLevel = {}, 0
+	local indent = "\t"
+
+	for line in source:gmatch("[^\r\n]+") do
+		local trimmed = line:match("^%s*(.-)%s*$")
+
+		-- decrease indent before keywords
+		if trimmed:match("end$") or trimmed:match("^else") or trimmed:match("^elseif") or trimmed:match("^until") then
+			indentLevel = math.max(indentLevel - 1, 0)
+		end
+
+		table.insert(formatted, string.rep(indent, indentLevel) .. trimmed)
+
+		-- increase indent after keywords
+		if trimmed:match("then$") or trimmed:match("do$") or trimmed:match("^function%s") or trimmed:match("{%s*$") then
+			indentLevel += 1
+		end
+	end
+
+	return table.concat(formatted, "\n")
+end
+
+-- Ensure one blank line between function definitions
+local function normalizeFunctionSpacing(source: string): string
+	local code = source
+
+	-- Insert a blank line before each function if not present
+	code = code:gsub("([^\n])\n(function%s)", "%1\n\n%2")
+
+	-- Collapse multiple empty lines
+	code = code:gsub("\n%s*\n%s*\n", "\n\n")
+
+	return code
+end
+
+local function formatScript(scriptObj: LuaSourceContainer)
+	if not scriptObj then return end
+
+	local rawSource = safeGetSource(scriptObj)
+	if not rawSource then return end
+
+	-- Only add header if missing
+	local hasHeader = rawSource:match("^%-+%s*\n%-%-")
+
+	local indented = formatIndentation(rawSource)
+	local cleaned = normalizeFunctionSpacing(indented)
+
+	local finalCode = cleaned
+	if not hasHeader then
+		local header = string.format(HEADER, scriptObj.Name, os.date("%Y-%m-%d"))
+		finalCode = header .. "\n" .. cleaned
+	end
+
+	scriptObj.Source = finalCode
+
+	-- Reopen script so user sees the change
+	if plugin.OpenScript then
+		pcall(function() plugin:OpenScript(scriptObj, 1) end)
+	end
+
+	warn(("[Formatter] %s formatted successfully."):format(scriptObj:GetFullName()))
+end
+
+formatButton.Click:Connect(function()
+	local selection = game:GetService("Selection"):Get()
+	for _, obj in ipairs(selection) do
+		if obj:IsA("Script") or obj:IsA("LocalScript") or obj:IsA("ModuleScript") then
+			formatScript(obj)
+		end
+	end
 end)
