@@ -13,7 +13,7 @@ graph LR
     %% CLIENT
     %% ================================
     subgraph Client-Server Connectors
-        C[Server_Fight_Handle]
+        C[Server_Fight_Handle >> now Fight_Actions_Handle]
         M[Char Attributes]
     end
 
