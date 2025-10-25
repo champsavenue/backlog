@@ -1,0 +1,5 @@
+PlayerOfferState => Offers_Config / Display_Podium_Center / Display_Podium_Left
+GA_PlayerDS_1.0.0 => GameAnalytics/Store
+Limited_Items => Monetization_Handle
+UsedUniqueCodes_FINAL => Unique_Codes_Handle
+Natio_Elo, Natio_Elo1, Natio_Elo2 => GlobalLeaderBoards

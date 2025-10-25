@@ -1,0 +1,31 @@
+--======================================================================
+--  File: ServerScriptService/Unique_Codes_Handle.lua
+--
+--  Description:
+--      Handles one-time unique code redemption and rewards for players.
+--
+--  Author(s): Darkzeb, Exclusible
+--
+--  Last Modified: 2025-09-29 by Darkzeb
+--
+--  Version: V2025-09
+--
+--  Dependencies:
+--      - ServerScriptService:
+--          * Codes_Unique 
+--      - ServerStorage:
+--          * Unique_Codes_Rewards
+--      - ReplicatedStorage:
+--          * Channels_F/Client_Server_F/RF/Redeem_Unique_Code
+--      - StarterGui:
+--          * Codes_UI
+--      - Roblox Services:
+--          * DataStoreService (UsedUniqueCodes_FINAL DataStore)
+--          * ServerStorage
+--
+--  Notes:
+--      - Uses UpdateAsync to prevent race conditions
+--      - Validates input code (string, trimmed, uppercase, max length)
+--      - Wraps reward execution in pcall for safety
+--
+--======================================================================
