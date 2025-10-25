@@ -1,0 +1,91 @@
+graph LR
+    %% ================================
+    %% SERVER
+    %% ================================
+    subgraph Server_Logic
+        direction TB
+        A[Fight_Assignment_Handle]
+        B[Core_Fight_Handle]
+        A -->|Start_Core_Fight| B
+    end
+
+    %% ================================
+    %% CLIENT
+    %% ================================
+    subgraph Client-Server Connectors
+        C[Server_Fight_Handle >> now Fight_Actions_Handle]
+        M[Char Attributes]
+    end
+
+    subgraph Client_UI_Handlers
+        direction TB
+        subgraph Launch Fight
+        E[Client_Fight_Teleport_Handle]
+        end 
+
+        F[Client_Fight_Handle]
+
+        subgraph Takedown UI - gauges
+            H[TakedownHandler]
+            G[Mobile_Buttons_Handle]
+        end
+        subgraph Submission minigame
+            I[Client_Submission_Handle]
+            J[Click_Rate_System]
+        end
+        subgraph Visual Effects
+            D[Client_Fight_Intro_Handle]
+            K[Client_Fight_Result_Handle]
+            L[Client_Damage_Effect_Handle]
+        end
+    end
+
+    %% ================================
+    %% SERVER TO CLIENT (Remote Events)
+    %% ================================
+
+    A -->|Fight_Spawn_Notification| E 
+    B -->|End_Fight| F
+    B -->|Reset_Fight_Health_Data| C
+    B -->|Toggle_Cutscene| D
+    B -->|Fight_Set_Up| D
+    B -->|Display_Takedown_Tracking| H
+    B -->|Round_Result_Win| L
+    B -->|Fight_Data_Result| K
+    B -->|Cage_Clinch_Start| F
+    B -->|Start_Submission - START | I
+    B -->|Start_Submission - STOP | I
+
+    
+    %% ================================
+    %% CLIENT TO SERVER (Remote Events)
+    %% ================================
+    F -->|Takedown_E - local event of Cage Model| B
+    M -->|Health_V.Changed, HUM.Changed, AncestryChanged | B
+
+    %% ================================
+    %% CLIENT TO CLIENT (Bindable Events)
+    %% ================================
+    D -->|Enter_Fight_Mode| F
+    D -->|Set_Fight_Mode_Lock| F
+    D -->|Disable_Fight_Mode| F
+    D -->|New_Round_Display| H
+    D -->|Close_Fight_Result| K
+
+    H -->|Mobile_Takedown_Toggle| G
+
+    I -->|Click_Rate_Inc| J
+    I -->|Click_Rate_Reset| J
+    J -->|Click_Rate_Update| I
+
+    I -->|On_Submission_Handle| F
+    I -->|Toggle_Takedown_Prog_Button| H
+
+    C -->|ApplyStrikes| M
+
+    %% ================================
+    %% CLIENT TO CLIENT (Fight Events)
+    %% ================================
+    C --> |Dodging_Strike, Blocking_Strike, Unblocking_Strike,Throwing_Strike | F
+    F --> |Got_Hit_Effect, Overhand_Display, Punch_Hit_VFX| C
+    
