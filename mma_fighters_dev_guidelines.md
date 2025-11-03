@@ -306,12 +306,13 @@ StarterGui
 - Only `LocalScripts` here — no `Script` instances.
 - Connect to RemoteEvents via:
   ```lua
-  local Channels 				= require(RS:WaitForChild("Modules"):WaitForChild("Channels"))
+  local RS						= game:GetService("ReplicatedStorage")
+  local Channels				= require(RS:WaitForChild("Modules"):WaitForChild("Channels"))
   -- Use centralized references from Channels
-  local Display_Data_E 			= Channels.Bindable_Events.Display_Data
-  local Toggle_Side_Buttons 	= Channels.Bindable_Events.Toggle_Side_Buttons
-  local Open_Stats 				= Channels.Bindable_Events.Open_Stats
-  local Open_Appearance 		= Channels.Bindable_Events.Open_Appearance
+  local Display_Data_E			= Channels.Bindable_Events.Display_Data
+  local Toggle_Side_Buttons		= Channels.Bindable_Events.Toggle_Side_Buttons
+  local Open_Stats				= Channels.Bindable_Events.Open_Stats
+  local Open_Appearance			= Channels.Bindable_Events.Open_Appearance
   ```
 - GUI naming convention: `<Context>_UI` (e.g., `Changelog_UI`, `Halloween_UGCs_Shop_UI`).
 - GUI should be resolution-independent (use `UIScale` or anchor points).
