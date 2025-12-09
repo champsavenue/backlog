@@ -18,6 +18,8 @@ local lastAuditReport = nil
 local AuditExcludes = {
     "game.ServerStorage._ScriptExport", -- éviter les scripts exportés
     "game.ReplicatedStorage.Vendor",    -- libs externes
+	"game.ReplicatedStorage.Modules.GameAnalytics",
+	"game.ReplicatedStorage.Debug"
 }
 
 ----------------------------------------------------------------------
@@ -131,13 +133,13 @@ local Severities = {
 }
 
 local function isExcluded(path: string): boolean
-	for _, patt in ipairs(AuditExcludes) do
-		-- si on veut correspondance exacte :
-		if path:sub(1, #patt) == patt then
-			return true
-		end
-	end
-	return false
+    for _, patt in ipairs(AuditExcludes) do
+        -- normalize to exact subtree: patt + "."
+        if path:sub(1, #patt + 1) == patt .. "." then
+            return true
+        end
+    end
+    return false
 end
 
 local function rankToText(n)
@@ -519,6 +521,10 @@ local function findPrints()
     local insideBlockComment = false
 
     for _, inst in ipairs(game:GetDescendants()) do
+		local path = getFullNameFast(inst)
+		if isExcluded(path) then
+			continue
+		end
         if inst:IsA("Script") or inst:IsA("LocalScript") or inst:IsA("ModuleScript") then
             local src = safeGetSource(inst)
             if src then
