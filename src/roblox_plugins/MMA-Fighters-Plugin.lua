@@ -594,6 +594,85 @@ local function showPrints()
     scrolling.CanvasSize = UDim2.new(0,0,0,uiList.AbsoluteContentSize.Y+20)
 end
 
+-- =============================================================
+-- [5] DEAD CODE ANALYZER (unused locals & unused local functions)
+-- =============================================================
+
+local function cleanCodeLine(line)
+    -- remove block comments
+    line = line:gsub("%-%-%[%[.-%]%]", "")
+    -- remove inline comments
+    line = line:gsub("%-%-.*", "")
+    -- remove quoted strings
+    line = line:gsub('".-"', "")
+    line = line:gsub("'.-'", "")
+    return line
+end
+
+
+local function analyzeDeadCode()
+    local results = {}
+
+    for _, inst in ipairs(game:GetDescendants()) do
+        local path = getFullNameFast(inst)
+        if isExcluded(path) then continue end
+        if not inst:IsA("Script") and not inst:IsA("LocalScript") and not inst:IsA("ModuleScript") then continue end
+
+        local src = safeGetSource(inst)
+        if not src then continue end
+
+        local lines = {}
+        for s in (src.."\n"):gmatch("(.-)\r?\n") do table.insert(lines, s) end
+
+        local defs = {}
+        local uses = {}
+
+        -- 1) collect definitions
+        for i, raw in ipairs(lines) do
+            local code = cleanCodeLine(raw)
+
+            local func = code:match("^%s*local%s+function%s+([%a_][%w_]*)")
+            if func then
+                defs[func] = { line = i, type = "func" }
+            end
+
+            local var = code:match("^%s*local%s+([%a_][%w_]*)%s*=")
+            if var then
+                defs[var] = { line = i, type = "var" }
+            end
+        end
+
+        -- 2) detect real usages (excluding the definition line)
+        for i, raw in ipairs(lines) do
+            local code = cleanCodeLine(raw)
+
+            for name, info in pairs(defs) do
+                if i ~= info.line then
+                    if code:match("%f[%w_]" .. name .. "%f[^%w_]") then
+                        uses[name] = true
+                    end
+                end
+            end
+        end
+
+        -- 3) build result list
+        for name, info in pairs(defs) do
+            if not uses[name] then
+                table.insert(results, {
+                    inst = inst,
+                    path = path,
+                    name = name,
+                    type = info.type,
+                    line = info.line
+                })
+            end
+        end
+    end
+
+    return results
+end
+
+
 ----------------------------------------------------------------------
 -- GUI
 ----------------------------------------------------------------------
@@ -663,3 +742,46 @@ printsButton.Click:Connect(function()
 	showPrints()
 end)
 
+local function showDeadCode()
+    clearUI()
+
+    local dead = analyzeDeadCode()
+    if #dead == 0 then
+        addLabel(scrolling, "No dead code found.", 16, true, Color3.fromRGB(150,255,150), 28)
+        return
+    end
+
+    addLabel(scrolling, ("=== %d dead code elements ==="):format(#dead), 18, true, Color3.fromRGB(255,200,80), 28)
+
+    for _, d in ipairs(dead) do
+        local txt = ("%s — %s '%s' (line %d)"):format(
+            d.path,
+            d.type == "func" and "unused function" or "unused variable",
+            d.name,
+            d.line
+        )
+
+        local btn = addLabel(scrolling, txt, 14, false, Color3.fromRGB(255,230,150), 20, true)
+        btn.MouseButton1Click:Connect(function()
+            game.Selection:Set({ d.inst })
+            if plugin.OpenScript then
+                pcall(function() plugin:OpenScript(d.inst, d.line) end)
+            end
+        end)
+    end
+
+    scrolling.CanvasSize = UDim2.new(0,0,0,uiList.AbsoluteContentSize.Y+20)
+end
+
+local deadButton = toolbar:CreateButton(
+    "Find Dead Code",
+    "Locate unused local variables and unused local functions",
+    "rbxassetid://6023426926"
+)
+deadButton.ClickableWhenViewportHidden = true
+
+deadButton.Click:Connect(function()
+    widget.Enabled = true
+    clearUI()
+    showDeadCode()
+end)
