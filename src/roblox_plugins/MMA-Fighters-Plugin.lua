@@ -19,8 +19,25 @@ local AuditExcludes = {
     "game.ServerStorage._ScriptExport", -- éviter les scripts exportés
     "game.ReplicatedStorage.Vendor",    -- libs externes
 	"game.ReplicatedStorage.Modules.GameAnalytics",
-	"game.ReplicatedStorage.Debug"
+	"game.ReplicatedStorage.Debug",
+	"game.ReplicatedStorage.Design",
+	"game.ServerScriptService.Debug",
+	"game.ServerScriptService.Tests"
 }
+
+-- Script names or patterns to exclude
+local EXCLUDED_SCRIPT_NAMES = {
+    "Animate", "AI_Training_Bot_Handle"
+}
+
+local function isScriptNameExcluded(name)
+    for _, pattern in ipairs(EXCLUDED_SCRIPT_NAMES) do
+        if name:match(pattern) then
+            return true
+        end
+    end
+    return false
+end
 
 ----------------------------------------------------------------------
 -- [1] EXPORT SCRIPTS
@@ -616,6 +633,8 @@ local function analyzeDeadCode()
     for _, inst in ipairs(game:GetDescendants()) do
         local path = getFullNameFast(inst)
         if isExcluded(path) then continue end
+		if isScriptNameExcluded(inst.Name) then continue end
+   
         if not inst:IsA("Script") and not inst:IsA("LocalScript") and not inst:IsA("ModuleScript") then continue end
 
         local src = safeGetSource(inst)
