@@ -1,6 +1,7 @@
 import re
 import requests
 from datetime import datetime
+import time
 
 # ---- CONFIG -------------------------------------------------------------
 
@@ -90,28 +91,24 @@ def parse_int(value, default=0):
         return default
 
 def generate_lua_block(rows, existing_by_id):
-    """
-    rows must contain: Key, Name, Asset ID, Price, Category, Priority
-    """
-    lines = []
+    entries = {}
     existing_keys = set(existing_by_id.values())
 
     for r in rows:
-        # Only keep rows explicitly published
-        published = str(r.get("Published", "")).strip().upper()
-        if published != "X":
+        # Only keep rows explicitly for sale
+        for_sale = str(r.get("FOR SALE", "")).strip().upper()
+        if for_sale != "X":
             continue
 
         raw_id = r.get("ID")
-
-        # Skip rows without a valid ID
         if raw_id is None or str(raw_id).strip() == "":
             continue
 
         asset_id = parse_id(raw_id)
-        name = r["NAME"]
-        price = int(r["PRICE"])
-        category = r.get("CATEGORY", "")
+
+        name = r.get("NAME", "").strip()
+        price = parse_int(r.get("PRICE"), 0)
+        category = r.get("CATEGORY", "").strip()
         priority = parse_int(r.get("PRIORITY"), 0)
 
         # Keep existing key if ID already exists
@@ -121,7 +118,7 @@ def generate_lua_block(rows, existing_by_id):
             key = generate_key(existing_keys)
             existing_keys.add(key)
 
-        lua = (
+        entries[key] = (
             f'    ["{key}"] = {{ '
             f'Name = "{name}", '
             f'ID = {asset_id}, '
@@ -131,9 +128,9 @@ def generate_lua_block(rows, existing_by_id):
             f'Thumbnail = "rbxthumb://type=Asset&Id={asset_id}&w=150&h=150" '
             f'}},'
         )
-        lines.append(lua)
 
-    return "\n".join(lines)
+    # Sort by key (alphabetical)
+    return "\n".join(entries[k] for k in sorted(entries.keys()))
 
 
 def main():
@@ -146,9 +143,6 @@ def main():
         f.write("local UGC_Data = {\n")
         f.write(lua_block)
         f.write("\n}\n")
-
-    print("UGC_Data.generated.lua created.")
-
 
 if __name__ == "__main__":
     main()
